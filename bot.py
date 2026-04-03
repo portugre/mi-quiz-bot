@@ -25,8 +25,11 @@ class QuizBot:
         self.estado_creacion = None
     
     def _parsear_fecha(self, texto):
+        """Convierte texto a datetime - Acepta AM/am/Am y PM/pm/Pm"""
         try:
-            return datetime.strptime(texto.upper(), '%d/%m/%Y %I:%M %p')
+            # Convertir a mayúsculas para que funcione con cualquier combinación
+            texto_normalizado = texto.upper().strip()
+            return datetime.strptime(texto_normalizado, '%d/%m/%Y %I:%M %p')
         except:
             return None
     
@@ -104,14 +107,14 @@ class QuizBot:
         elif self.estado_creacion == 'NOMBRE':
             self.quiz['nombre'] = texto
             self.estado_creacion = 'INICIO'
-            await update.message.reply_text("Nombre: " + texto + "\n\nINICIO:\nFormato: DD/MM/YYYY HH:MM AM/PM\nEj: 20/03/2026 02:00 PM")
+            await update.message.reply_text("Nombre: " + texto + "\n\nINICIO:\nFormato: DD/MM/YYYY HH:MM AM/PM\nEj: 04/04/2026 08:00 PM\n\nNota: Puedes usar AM, am, Am o PM, pm, Pm")
         elif self.estado_creacion == 'INICIO':
             inicio_dt = self._parsear_fecha(texto)
             if not inicio_dt:
-                await update.message.reply_text("Formato incorrecto.\n\nUsa: DD/MM/YYYY HH:MM AM/PM\nEj: 03/04/2026 08:00 PM")
+                await update.message.reply_text("❌ Formato incorrecto.\n\nUsa: DD/MM/YYYY HH:MM AM/PM\nEjemplos válidos:\n• 04/04/2026 08:00 PM\n• 04/04/2026 08:00 pm\n• 04/04/2026 8:00 PM")
                 return
             if inicio_dt <= datetime.now():
-                await update.message.reply_text("Debe ser en el futuro.")
+                await update.message.reply_text("❌ La fecha debe ser en el futuro.\n\nHora actual: " + datetime.now().strftime('%d/%m/%Y %I:%M %p') + "\n\nUsa una fecha posterior.")
                 return
             self.quiz['inicio'] = texto
             self.quiz['inicio_dt'] = inicio_dt
@@ -120,7 +123,7 @@ class QuizBot:
         elif self.estado_creacion == 'FIN':
             fin_dt = self._parsear_fecha(texto)
             if not fin_dt:
-                await update.message.reply_text("Formato incorrecto.")
+                await update.message.reply_text("Formato incorrecto.\n\nUsa: DD/MM/YYYY HH:MM AM/PM")
                 return
             if fin_dt <= self.quiz['inicio_dt']:
                 await update.message.reply_text("Fin debe ser despues del inicio.")
