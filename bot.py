@@ -1,4 +1,4 @@
-# bot.py - VERSIÓN FINAL VERIFICADA
+# bot.py
 import logging
 import json
 import random
@@ -199,7 +199,6 @@ class QuizBot:
         await (query.message.reply_text if query else update.message.reply_text)(msg)
     
     async def procesar_registro(self, update, ctx):
-        # ✅ LÍNEA CORREGIDA - ctx.user_data COMPLETO
         if 'quiz_id' not in ctx.user_data:
             return
         qid = ctx.user_data['quiz_id']
@@ -276,7 +275,6 @@ class QuizBot:
     async def procesar_todo(self, update, ctx):
         if self.estado_creacion:
             await self.procesar_creacion(update, ctx)
-        # ✅ LÍNEA CORREGIDA - ctx.user_data COMPLETO
         elif 'quiz_id' in ctx.user_data:
             paso = ctx.user_data.get('paso_registro', '')
             if paso == 'RESPUESTA_PREGUNTA':
@@ -347,7 +345,6 @@ class QuizBot:
         except:
             await update.message.reply_text("❌ Uso: /borrar_quiz <ID>")
     
-    # ✅ COMANDO /notas - FUNCIONAL
     async def ver_notas(self, update, ctx):
         if update.effective_user.id != ADMIN_ID:
             await update.message.reply_text("❌ Solo el admin puede ver las notas")
@@ -411,7 +408,6 @@ def main():
     app.add_handler(CommandHandler("cerrar", bot.cerrar))
     app.add_handler(CommandHandler("participar", bot.participar))
     app.add_handler(CommandHandler("borrar_quiz", bot.borrar_quiz))
-    # ✅ HANDLER PARA /notas
     app.add_handler(CommandHandler("notas", bot.ver_notas))
     app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.procesar_todo))
