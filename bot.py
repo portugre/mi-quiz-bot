@@ -5,6 +5,8 @@ import re
 import random
 import string
 import os
+import csv
+import io
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -82,9 +84,12 @@ class QuizBot:
             await self.ver_quiz_detalle(update, ctx, quiz_id)
         elif data == "volver_menu":
             await self.mis_quizzes(update, ctx)
+        elif data.startswith("excel_"):
+            quiz_id = int(data.split("_")[1])
+            await self.descargar_excel(update, ctx, quiz_id)
     
     async def ayuda(self, update, ctx):
-        await update.message.reply_text("Comandos:\n/crear_quiz - Crear\n/mis_quizzes - Ver\n/enlace <ID> - Enlace")
+        await update.message.reply_text("Comandos:\n/crear_quiz - Crear\n/mis_quizzes - Ver\n/enlace <ID> - Enlace\n/notas <ID> - Ver notas")
     
     async def crear_quiz(self, update, ctx):
         self.quiz = {'preguntas': []}
@@ -271,7 +276,6 @@ class QuizBot:
             await update.message.reply_text(msg)
     
     async def procesar_registro(self, update, ctx):
-        # ✅ CORREGIDO: ctx.user_data (completo)
         if 'quiz_id' not in ctx.user_data:
             return
         qid = ctx.user_data['quiz_id']
@@ -405,7 +409,6 @@ class QuizBot:
     async def procesar_todo(self, update, ctx):
         if self.estado_creacion:
             await self.procesar_creacion(update, ctx)
-        # ✅ CORREGIDO: ctx.user_data (completo)
         elif 'quiz_id' in ctx.user_data:
             paso = ctx.user_data.get('paso_registro', '')
             if paso == 'RESPUESTA_PREGUNTA':
@@ -485,7 +488,6 @@ class QuizBot:
         if update.effective_user.id != ADMIN_ID:
             await update.message.reply_text("❌ Solo el admin puede usar este comando")
             return
-        
         try:
             quiz_id = int(ctx.args[0])
             self.db.delete_quiz(quiz_id)
@@ -494,6 +496,106 @@ class QuizBot:
             await update.message.reply_text("❌ Uso: /borrar_quiz <ID>\nEjemplo: /borrar_quiz 3")
         except Exception as e:
             await update.message.reply_text(f"❌ Error al eliminar: {str(e)}")
+    
+    # ✅ COMANDO PARA VER NOTAS (NUEVO)
+    async def ver_notas(self, update, ctx):
+        if update.effective_user.id != ADMIN_ID:
+            await update.message.reply_text("❌ Solo el admin puede ver las notas")
+            return
+        try:
+            quiz_id = int(ctx.args[0])
+        except (ValueError, IndexError):
+            await update.message.reply_text("❌ Uso: /notas <ID>\nEjemplo: /notas 4")
+            return
+        
+        quiz = self.db.get_quiz(quiz_id)
+        if not quiz:
+            await update.message.reply_text("❌ Quiz no encontrado")
+            return
+        
+        respuestas = self.db.get_responses_by_quiz(quiz_id)
+        preguntas = json.loads(quiz['preguntas'])
+        total_preguntas = len(preguntas)
+        
+        if not respuestas:
+            await update.message.reply_text(f"📊 {quiz['nombre']}\n\n📝 Aún no hay respuestas registradas")
+            return
+        
+        total_estudiantes = len(respuestas)
+        suma_puntuaciones = sum(r['puntuacion'] for r in respuestas)
+        promedio = round(suma_puntuaciones / total_estudiantes, 2) if total_estudiantes > 0 else 0
+        
+        msg = f"📊 NOTAS DETALLADAS\n\n"
+        msg += f"📚 {quiz['materia']}\n"
+        msg += f"📝 {quiz['nombre']}\n"
+        msg += f"👥 Estudiantes: {total_estudiantes}\n"
+        msg += f"📈 Promedio: {promedio}/{total_preguntas}\n\n"
+        
+        for resp in respuestas:
+            nombre = resp['nombre_completo']
+            puntuacion = resp['puntuacion']
+            porcentaje = round((puntuacion / total_preguntas) * 100)
+            msg += f"👤 {nombre}\n"
+            msg += f"✅ {puntuacion}/{total_preguntas} ({porcentaje}%)\n\n"
+        
+        keyboard = [[InlineKeyboardButton("📥 DESCARGAR EXCEL", callback_data=f"excel_{quiz_id}")]]
+        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # ✅ FUNCIÓN PARA DESCARGAR EXCEL (NUEVO)
+    async def descargar_excel(self, update, ctx, quiz_id):
+        query = update.callback_query
+        await query.answer()
+        
+        quiz = self.db.get_quiz(quiz_id)
+        respuestas = self.db.get_responses_by_quiz(quiz_id)
+        preguntas = json.loads(quiz['preguntas'])
+        
+        if not respuestas:
+            await query.edit_message_text("❌ No hay respuestas para este quiz")
+            return
+        
+        # Crear CSV (compatible con Excel)
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Headers
+        headers = ['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje']
+        writer.writerow(headers)
+        
+        # Datos
+        for resp in respuestas:
+            nombre_completo = resp['nombre_completo']
+            # Extraer cédula si está en el formato "Nombre (12345678)"
+            if '(' in nombre_completo and ')' in nombre_completo:
+                nombre = nombre_completo.split('(')[0].strip()
+                cedula = nombre_completo.split('(')[1].replace(')', '').strip()
+            else:
+                nombre = nombre_completo
+                cedula = ''
+            
+            respuestas_dict = json.loads(resp['respuestas']) if isinstance(resp['respuestas'], str) else resp['respuestas']
+            
+            row = [nombre, cedula]
+            for i in range(1, len(preguntas)+1):
+                row.append(respuestas_dict.get(i, ''))
+            
+            puntuacion = resp['puntuacion']
+            porcentaje = round((puntuacion / len(preguntas)) * 100)
+            row.append(puntuacion)
+            row.append(f"{porcentaje}%")
+            
+            writer.writerow(row)
+        
+        # Enviar archivo
+        output.seek(0)
+        filename = f"notas_{quiz_id}_{quiz['nombre'].replace(' ', '_')}.csv"
+        
+        await query.message.reply_document(
+            document=io.BytesIO(output.getvalue().encode('utf-8')),
+            filename=filename,
+            caption=f"📊 Notas de {quiz['nombre']}"
+        )
+        await query.edit_message_text("✅ Archivo CSV generado")
 
 def main():
     bot = QuizBot()
@@ -506,8 +608,12 @@ def main():
     app.add_handler(CommandHandler("activar", bot.activar))
     app.add_handler(CommandHandler("cerrar", bot.cerrar))
     app.add_handler(CommandHandler("participar", bot.participar))
-    app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(CommandHandler("borrar_quiz", bot.borrar_quiz))
+    
+    # ✅ HANDLER PARA /notas (NUEVO)
+    app.add_handler(CommandHandler("notas", bot.ver_notas))
+    
+    app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.procesar_todo))
     print("BOT INICIADO - Pregunta por pregunta")
     app.run_polling()
