@@ -382,10 +382,9 @@ class QuizBot:
         if not respuestas:
             await query.edit_message_text("❌ No hay respuestas")
             return
-        
-        # ✅ CORRECCIÓN AQUÍ - delimiter=';' para Excel en español
         output = io.StringIO()
-        writer = csv.writer(output, delimiter=';')  # ← ESTO ES LO IMPORTANTE
+        # ✅ CORRECCIÓN: delimiter=';' para Excel en español
+        writer = csv.writer(output, delimiter=';')
         writer.writerow(['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje'])
         for resp in respuestas:
             nc = resp['nombre_completo']
