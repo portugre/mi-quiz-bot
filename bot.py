@@ -96,27 +96,34 @@ class QuizBot:
     
     async def procesar_creacion(self, update, ctx):
         texto = update.message.text
+        
         if self.estado_creacion == 'MATERIA':
             self.quiz['materia'] = texto
             self.estado_creacion = 'NOMBRE'
-            await update.message.reply_text("Materia: " + texto + "\n\nNOMBRE del quiz:")
+            await update.message.reply_text("Materia: " + texto + "\n\nNOMBRE del quiz:\n\nEj: Examen Parcial 1")
         elif self.estado_creacion == 'NOMBRE':
             self.quiz['nombre'] = texto
             self.estado_creacion = 'INICIO'
-            await update.message.reply_text("Nombre: " + texto + "\n\nINICIO:\nFormato: DD/MM/YYYY HH:MM AM/PM")
+            await update.message.reply_text("Nombre: " + texto + "\n\nINICIO:\nFormato: DD/MM/YYYY HH:MM AM/PM\nEj: 20/03/2026 02:00 PM")
         elif self.estado_creacion == 'INICIO':
             inicio_dt = self._parsear_fecha(texto)
-            if not inicio_dt or inicio_dt <= datetime.now():
-                await update.message.reply_text("Formato incorrecto o fecha en el pasado.")
+            if not inicio_dt:
+                await update.message.reply_text("Formato incorrecto.\n\nUsa: DD/MM/YYYY HH:MM AM/PM\nEj: 03/04/2026 08:00 PM")
+                return
+            if inicio_dt <= datetime.now():
+                await update.message.reply_text("Debe ser en el futuro.")
                 return
             self.quiz['inicio'] = texto
             self.quiz['inicio_dt'] = inicio_dt
             self.estado_creacion = 'FIN'
-            await update.message.reply_text("Inicio: " + self._formato_mostrar(inicio_dt) + "\n\nFIN:")
+            await update.message.reply_text("Inicio: " + self._formato_mostrar(inicio_dt) + "\n\nFIN:\nFormato: DD/MM/YYYY HH:MM AM/PM")
         elif self.estado_creacion == 'FIN':
             fin_dt = self._parsear_fecha(texto)
-            if not fin_dt or fin_dt <= self.quiz['inicio_dt']:
-                await update.message.reply_text("Fin debe ser después del inicio.")
+            if not fin_dt:
+                await update.message.reply_text("Formato incorrecto.")
+                return
+            if fin_dt <= self.quiz['inicio_dt']:
+                await update.message.reply_text("Fin debe ser despues del inicio.")
                 return
             self.quiz['fin'] = texto
             self.quiz['fin_dt'] = fin_dt
@@ -154,7 +161,7 @@ class QuizBot:
                 return
             self.quiz['preguntas'].append({'pregunta': self.pregunta['texto'], 'opciones': self.pregunta['opciones'], 'correcta': texto.upper()})
             self.estado_creacion = 'MAS_PREG'
-            await update.message.reply_text("Pregunta lista!\n\nOtra? (SI/NO):")
+            await update.message.reply_text("Pregunta " + str(len(self.quiz['preguntas'])) + " lista!\n\nOtra? (SI/NO):")
         elif self.estado_creacion == 'MAS_PREG':
             if texto.upper() == 'SI':
                 self.estado_creacion = 'PREGUNTA'
@@ -167,11 +174,27 @@ class QuizBot:
     async def _guardar_quiz(self, update):
         try:
             codigo = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            qid = self.db.save_quiz(self.quiz['materia'], self.quiz['nombre'], self.quiz['preguntas'], self.quiz['inicio'], self.quiz['fin'], codigo)
+            
+            materia = self.quiz['materia']
+            nombre = self.quiz['nombre']
+            
+            qid = self.db.save_quiz(materia, nombre, self.quiz['preguntas'], self.quiz['inicio'], self.quiz['fin'], codigo)
+            
             self.quiz = {}
             self.pregunta = {}
             self.estado_creacion = None
-            await update.message.reply_text(f"✅ QUIZ CREADO!\n🆔 ID: {qid}\n🔑 Codigo: {codigo}\n🔗 https://t.me/{BOT_USERNAME}?start={codigo}")
+            
+            enlace_correcto = "https://t.me/" + BOT_USERNAME + "?start=" + codigo
+            
+            await update.message.reply_text(
+                "✅ QUIZ CREADO!\n\n"
+                "📚 Materia: " + materia + "\n"
+                "📝 Nombre: " + nombre + "\n"
+                "🆔 ID: " + str(qid) + "\n"
+                "🔑 Codigo: " + codigo + "\n\n"
+                "🔗 ENLACE:\n" + enlace_correcto + "\n\n"
+                "💡 Comparte en tu grupo"
+            )
         except Exception as e:
             await update.message.reply_text("Error: " + str(e))
             self.estado_creacion = None
@@ -181,22 +204,74 @@ class QuizBot:
             query = update.callback_query if update.callback_query else None
             qid = int(ctx.args[0])
         except:
-            await (query.edit_message_text if query else update.message.reply_text)("Quiz no valido")
+            if query:
+                await query.edit_message_text("Quiz no valido")
+            else:
+                await update.message.reply_text("Quiz no valido")
             return
+        
         quiz = self.db.get_quiz(qid)
-        if not quiz or self.db.user_already_responded(qid, update.effective_user.id) or not quiz.get('activo'):
-            await (query.edit_message_text if query else update.message.reply_text)("Quiz no disponible")
+        if not quiz:
+            if query:
+                await query.edit_message_text("Quiz no encontrado")
+            else:
+                await update.message.reply_text("Quiz no encontrado")
             return
+        
+        user_id = update.effective_user.id
+        if self.db.user_already_responded(qid, user_id):
+            if query:
+                await query.edit_message_text("Ya respondiste este quiz")
+            else:
+                await update.message.reply_text("Ya respondiste este quiz")
+            return
+        
+        if not quiz.get('activo'):
+            if query:
+                await query.edit_message_text("Quiz desactivado")
+            else:
+                await update.message.reply_text("Quiz desactivado")
+            return
+        
         now = datetime.now()
         inicio_dt = self._parsear_fecha(quiz['inicio'])
         fin_dt = self._parsear_fecha(quiz['fin'])
-        if not inicio_dt or not fin_dt or now < inicio_dt or now > fin_dt:
-            await (query.edit_message_text if query else update.message.reply_text)(f"Inicia: {self._formato_mostrar(inicio_dt)}" if now < inicio_dt else f"Finalizo: {self._formato_mostrar(fin_dt)}")
+        
+        if not inicio_dt or not fin_dt:
+            if query:
+                await query.edit_message_text("Error en fechas")
+            else:
+                await update.message.reply_text("Error en fechas")
             return
+        
+        if now < inicio_dt:
+            msg = "Inicia: " + self._formato_mostrar(inicio_dt)
+            if query:
+                await query.edit_message_text(msg)
+            else:
+                await update.message.reply_text(msg)
+            return
+        
+        if now > fin_dt:
+            msg = "Finalizo: " + self._formato_mostrar(fin_dt)
+            if query:
+                await query.edit_message_text(msg)
+            else:
+                await update.message.reply_text(msg)
+            return
+        
         ctx.user_data['quiz_id'] = qid
         ctx.user_data['paso_registro'] = 'NOMBRE'
-        msg = f"{quiz['materia']}\n{quiz['nombre']}\n\nFinaliza: {self._formato_mostrar(fin_dt)}\n\n1. Tu NOMBRE:"
-        await (query.message.reply_text if query else update.message.reply_text)(msg)
+        
+        msg = (quiz['materia'] + "\n" + 
+               quiz['nombre'] + "\n\n" + 
+               "Finaliza: " + self._formato_mostrar(fin_dt) + 
+               "\n\n1. Tu NOMBRE:")
+        
+        if query:
+            await query.message.reply_text(msg)
+        else:
+            await update.message.reply_text(msg)
     
     async def procesar_registro(self, update, ctx):
         if 'quiz_id' not in ctx.user_data:
@@ -204,57 +279,81 @@ class QuizBot:
         qid = ctx.user_data['quiz_id']
         paso = ctx.user_data.get('paso_registro', 'NOMBRE')
         texto = update.message.text.strip()
+        
         if paso == 'NOMBRE':
             ctx.user_data['nombre'] = texto
             ctx.user_data['paso_registro'] = 'APELLIDO'
             await update.message.reply_text("2. Tu APELLIDO:")
+        
         elif paso == 'APELLIDO':
             ctx.user_data['apellido'] = texto
             ctx.user_data['paso_registro'] = 'CEDULA'
             await update.message.reply_text("3. Tu CEDULA (solo numeros):")
+        
         elif paso == 'CEDULA':
             if not texto.isdigit():
                 await update.message.reply_text("Cedula debe ser solo numeros:")
                 return
             ctx.user_data['cedula'] = texto
+            
             quiz = self.db.get_quiz(qid)
             preguntas = json.loads(quiz['preguntas'])
-            ctx.user_data.update({'total': len(preguntas), 'pregunta_actual': 0, 'respuestas': {}, 'paso_registro': 'RESPUESTA_PREGUNTA'})
+            ctx.user_data['total'] = len(preguntas)
+            ctx.user_data['pregunta_actual'] = 0
+            ctx.user_data['respuestas'] = {}
+            ctx.user_data['paso_registro'] = 'RESPUESTA_PREGUNTA'
+            
             await self._mostrar_pregunta(update, ctx, 0)
     
     async def _mostrar_pregunta(self, update, ctx, indice):
         qid = ctx.user_data['quiz_id']
         quiz = self.db.get_quiz(qid)
         preguntas = json.loads(quiz['preguntas'])
+        
         if indice >= len(preguntas):
             await self._finalizar_quiz(update, ctx)
             return
+        
         pregunta = preguntas[indice]
-        msg = f"📝 PREGUNTA {indice+1} de {len(preguntas)}\n\n{pregunta['pregunta']}\n\n"
+        letras = ['A', 'B', 'C', 'D']
+        
+        msg = "📝 PREGUNTA " + str(indice + 1) + " de " + str(len(preguntas)) + "\n\n"
+        msg += pregunta['pregunta'] + "\n\n"
+        
         for j, op in enumerate(pregunta['opciones']):
-            msg += f"{['A','B','C','D'][j]}) {op}\n"
+            msg += letras[j] + ") " + op + "\n"
+        
         msg += "\n✍️ Tu respuesta (A, B, C o D):"
+        
         await update.message.reply_text(msg)
     
     async def procesar_respuesta_pregunta(self, update, ctx):
         if ctx.user_data.get('paso_registro') != 'RESPUESTA_PREGUNTA':
             return
+        
         texto = update.message.text.strip().upper()
+        
         if texto not in ['A', 'B', 'C', 'D']:
             await update.message.reply_text("❌ Responde con A, B, C o D:")
             return
+        
         qid = ctx.user_data['quiz_id']
         indice = ctx.user_data.get('pregunta_actual', 0)
         respuestas = ctx.user_data.get('respuestas', {})
+        
         respuestas[indice + 1] = texto
         ctx.user_data['respuestas'] = respuestas
-        ctx.user_data['pregunta_actual'] = indice + 1
+        
+        indice += 1
+        ctx.user_data['pregunta_actual'] = indice
+        
         quiz = self.db.get_quiz(qid)
         preguntas = json.loads(quiz['preguntas'])
-        if indice + 1 >= len(preguntas):
+        
+        if indice >= len(preguntas):
             await self._finalizar_quiz(update, ctx)
         else:
-            await self._mostrar_pregunta(update, ctx, indice + 1)
+            await self._mostrar_pregunta(update, ctx, indice)
     
     async def _finalizar_quiz(self, update, ctx):
         qid = ctx.user_data['quiz_id']
@@ -262,14 +361,47 @@ class QuizBot:
         preguntas = json.loads(quiz['preguntas'])
         respuestas = ctx.user_data.get('respuestas', {})
         total = len(preguntas)
-        score = sum(1 for i, p in enumerate(preguntas, 1) if respuestas.get(i) == p['correcta'])
-        detalle = [f"P{i}: {respuestas.get(i,'')} ({'correcta' if respuestas.get(i)==p['correcta'] else 'era '+p['correcta']})" for i, p in enumerate(preguntas, 1)]
-        nombre_completo = f"{ctx.user_data.get('nombre','')} {ctx.user_data.get('apellido','')} ({ctx.user_data.get('cedula','')})"
-        self.db.save_response(qid, update.message.from_user.id, nombre_completo, respuestas, score)
+        
+        score = 0
+        detalle = []
+        
+        for i, p in enumerate(preguntas, 1):
+            correcta = p['correcta']
+            user_resp = respuestas.get(i, '')
+            
+            if user_resp == correcta:
+                score += 1
+                detalle.append("P" + str(i) + ": " + user_resp + " (correcta)")
+            else:
+                detalle.append("P" + str(i) + ": " + user_resp + " (era " + correcta + ")")
+        
+        user_id = update.message.from_user.id
+        nombre = ctx.user_data.get('nombre', '')
+        apellido = ctx.user_data.get('apellido', '')
+        cedula = ctx.user_data.get('cedula', '')
+        nombre_completo = nombre + " " + apellido
+        
+        self.db.save_response(qid, user_id, nombre_completo + " (" + cedula + ")", respuestas, score)
+        
         porcentaje = round((score / total) * 100) if total > 0 else 0
-        resultado = f"📊 RESULTADOS\n\n👤 {nombre_completo}\n✅ {score}/{total} ({porcentaje}%)\n\n📝 DETALLE:\n" + "\n".join(detalle)
-        resultado += "\n\n🎉 ¡APROBADO!" if porcentaje >= 70 else "\n\n📚 Sigue estudiando"
+        
+        resultado = "📊 RESULTADOS FINALES\n\n"
+        resultado += "👤 " + nombre_completo + "\n"
+        resultado += "🆔 Cedula: " + cedula + "\n\n"
+        resultado += "✅ Correctas: " + str(score) + "/" + str(total) + "\n"
+        resultado += "📈 Porcentaje: " + str(porcentaje) + "%\n\n"
+        resultado += "📝 DETALLE:\n"
+        
+        for d in detalle:
+            resultado += d + "\n"
+        
+        if porcentaje >= 70:
+            resultado += "\n🎉 ¡APROBADO! Excelente trabajo"
+        else:
+            resultado += "\n📚 Sigue estudiando. ¡Puedes mejorar!"
+        
         await update.message.reply_text(resultado)
+        
         ctx.user_data.clear()
     
     async def procesar_todo(self, update, ctx):
@@ -287,7 +419,13 @@ class QuizBot:
         if not quizzes:
             await update.message.reply_text("Sin quizzes")
             return
-        msg = "MIS QUIZZES\n\n" + "\n".join([f"ID: {q['id']}\nMateria: {q['materia']}\nNombre: {q['nombre']}\nEstado: {'Activo' if q['activo'] else 'Inactivo'}\n" for q in quizzes])
+        msg = "MIS QUIZZES\n\n"
+        for q in quizzes:
+            estado = "Activo" if q['activo'] else "Inactivo"
+            msg += "ID: " + str(q['id']) + "\n"
+            msg += "Materia: " + q['materia'] + "\n"
+            msg += "Nombre: " + q['nombre'] + "\n"
+            msg += "Estado: " + estado + "\n\n"
         await update.message.reply_text(msg)
     
     async def ver_quiz_detalle(self, update, ctx, quiz_id):
@@ -296,9 +434,12 @@ class QuizBot:
             await update.callback_query.edit_message_text("No encontrado")
             return
         codigo = quiz.get('codigo', "quiz_" + str(quiz_id))
-        enlace = f"https://t.me/{BOT_USERNAME}?start={codigo}"
-        msg = f"{quiz['materia']}\n\n{quiz['nombre']}\n\nCodigo: {codigo}\nEnlace:\n{enlace}\n\nInicio: {self._formato_mostrar(quiz['inicio'])}\nFin: {self._formato_mostrar(quiz['fin'])}\nPreguntas: {len(json.loads(quiz['preguntas']))}"
-        keyboard = [[InlineKeyboardButton("COPIAR ENLACE", callback_data=f"enlace_{quiz_id}")], [InlineKeyboardButton("VOLVER", callback_data="volver_menu")]]
+        enlace = "https://t.me/" + BOT_USERNAME + "?start=" + codigo
+        msg = quiz['materia'] + "\n\n" + quiz['nombre'] + "\n\nCodigo: " + codigo + "\nEnlace:\n" + enlace + "\n\nInicio: " + self._formato_mostrar(quiz['inicio']) + "\nFin: " + self._formato_mostrar(quiz['fin']) + "\nPreguntas: " + str(len(json.loads(quiz['preguntas'])))
+        keyboard = [
+            [InlineKeyboardButton("COPIAR ENLACE", callback_data="enlace_" + str(quiz_id))],
+            [InlineKeyboardButton("VOLVER", callback_data="volver_menu")]
+        ]
         await update.callback_query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
     
     async def generar_enlace(self, update, ctx):
@@ -312,7 +453,8 @@ class QuizBot:
             await update.message.reply_text("No encontrado")
             return
         codigo = quiz.get('codigo', "quiz_" + str(qid))
-        await update.message.reply_text(f"ENLACE:\n\n{quiz['materia']}\n{quiz['nombre']}\n\nhttps://t.me/{BOT_USERNAME}?start={codigo}")
+        enlace = "https://t.me/" + BOT_USERNAME + "?start=" + codigo
+        await update.message.reply_text("ENLACE:\n\n" + quiz['materia'] + "\n" + quiz['nombre'] + "\n\n" + enlace)
     
     async def activar(self, update, ctx):
         if update.message.from_user.id != ADMIN_ID:
@@ -320,7 +462,10 @@ class QuizBot:
             return
         try:
             qid = int(ctx.args[0])
-            await update.message.reply_text(f"Quiz #{qid} {'activado' if self.db.update_quiz_status(qid, True) else 'No encontrado'}")
+            if self.db.update_quiz_status(qid, True):
+                await update.message.reply_text("Quiz #" + str(qid) + " activado")
+            else:
+                await update.message.reply_text("No encontrado")
         except:
             await update.message.reply_text("Usa: /activar <ID>")
     
@@ -330,7 +475,10 @@ class QuizBot:
             return
         try:
             qid = int(ctx.args[0])
-            await update.message.reply_text(f"Quiz #{qid} {'cerrado' if self.db.update_quiz_status(qid, False) else 'No encontrado'}")
+            if self.db.update_quiz_status(qid, False):
+                await update.message.reply_text("Quiz #" + str(qid) + " cerrado")
+            else:
+                await update.message.reply_text("No encontrado")
         except:
             await update.message.reply_text("Usa: /cerrar <ID>")
     
@@ -342,8 +490,10 @@ class QuizBot:
             quiz_id = int(ctx.args[0])
             self.db.delete_quiz(quiz_id)
             await update.message.reply_text(f"✅ Quiz #{quiz_id} eliminado correctamente")
-        except:
-            await update.message.reply_text("❌ Uso: /borrar_quiz <ID>")
+        except (ValueError, IndexError):
+            await update.message.reply_text("❌ Uso: /borrar_quiz <ID>\nEjemplo: /borrar_quiz 3")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error al eliminar: {str(e)}")
     
     async def ver_notas(self, update, ctx):
         if update.effective_user.id != ADMIN_ID:
@@ -351,50 +501,92 @@ class QuizBot:
             return
         try:
             quiz_id = int(ctx.args[0])
-        except:
-            await update.message.reply_text("❌ Uso: /notas <ID>")
+        except (ValueError, IndexError):
+            await update.message.reply_text("❌ Uso: /notas <ID>\nEjemplo: /notas 4")
             return
+        
         quiz = self.db.get_quiz(quiz_id)
         if not quiz:
             await update.message.reply_text("❌ Quiz no encontrado")
             return
+        
         respuestas = self.db.get_responses_by_quiz(quiz_id)
         preguntas = json.loads(quiz['preguntas'])
         total_preguntas = len(preguntas)
+        
         if not respuestas:
-            await update.message.reply_text(f"📊 {quiz['nombre']}\n\n📝 Aún no hay respuestas")
+            await update.message.reply_text(f"📊 {quiz['nombre']}\n\n📝 Aún no hay respuestas registradas")
             return
-        total = len(respuestas)
-        promedio = round(sum(r['puntuacion'] for r in respuestas) / total, 2)
-        msg = f"📊 NOTAS\n\n📚 {quiz['materia']}\n📝 {quiz['nombre']}\n👥 Estudiantes: {total}\n📈 Promedio: {promedio}/{total_preguntas}\n\n"
+        
+        total_estudiantes = len(respuestas)
+        suma_puntuaciones = sum(r['puntuacion'] for r in respuestas)
+        promedio = round(suma_puntuaciones / total_estudiantes, 2) if total_estudiantes > 0 else 0
+        
+        msg = f"📊 NOTAS DETALLADAS\n\n"
+        msg += f"📚 {quiz['materia']}\n"
+        msg += f"📝 {quiz['nombre']}\n"
+        msg += f"👥 Estudiantes: {total_estudiantes}\n"
+        msg += f"📈 Promedio: {promedio}/{total_preguntas}\n\n"
+        
         for resp in respuestas:
-            pct = round((resp['puntuacion'] / total_preguntas) * 100)
-            msg += f"👤 {resp['nombre_completo']}\n✅ {resp['puntuacion']}/{total_preguntas} ({pct}%)\n\n"
+            nombre = resp['nombre_completo']
+            puntuacion = resp['puntuacion']
+            porcentaje = round((puntuacion / total_preguntas) * 100)
+            msg += f"👤 {nombre}\n"
+            msg += f"✅ {puntuacion}/{total_preguntas} ({porcentaje}%)\n\n"
+        
         keyboard = [[InlineKeyboardButton("📥 DESCARGAR EXCEL", callback_data=f"excel_{quiz_id}")]]
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
     
     async def descargar_excel(self, update, ctx, quiz_id):
         query = update.callback_query
         await query.answer()
+        
         quiz = self.db.get_quiz(quiz_id)
         respuestas = self.db.get_responses_by_quiz(quiz_id)
         preguntas = json.loads(quiz['preguntas'])
+        
         if not respuestas:
-            await query.edit_message_text("❌ No hay respuestas")
+            await query.edit_message_text("❌ No hay respuestas para este quiz")
             return
+        
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';')
-        writer.writerow(['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje'])
+        
+        headers = ['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje']
+        writer.writerow(headers)
+        
         for resp in respuestas:
-            nc = resp['nombre_completo']
-            nombre = nc.split('(')[0].strip() if '(' in nc else nc
-            cedula = nc.split('(')[1].replace(')','').strip() if '(' in nc else ''
-            rdict = json.loads(resp['respuestas']) if isinstance(resp['respuestas'], str) else resp['respuestas']
-            row = [nombre, cedula] + [rdict.get(i,'') for i in range(1, len(preguntas)+1)] + [resp['puntuacion'], f"{round((resp['puntuacion']/len(preguntas))*100)}%"]
+            nombre_completo = resp['nombre_completo']
+            if '(' in nombre_completo and ')' in nombre_completo:
+                nombre = nombre_completo.split('(')[0].strip()
+                cedula = nombre_completo.split('(')[1].replace(')', '').strip()
+            else:
+                nombre = nombre_completo
+                cedula = ''
+            
+            respuestas_dict = json.loads(resp['respuestas']) if isinstance(resp['respuestas'], str) else resp['respuestas']
+            
+            row = [nombre, cedula]
+            for i in range(1, len(preguntas)+1):
+                row.append(respuestas_dict.get(i, ''))
+            
+            puntuacion = resp['puntuacion']
+            porcentaje = round((puntuacion / len(preguntas)) * 100)
+            row.append(puntuacion)
+            row.append(f"{porcentaje}%")
+            
             writer.writerow(row)
+        
         output.seek(0)
-        await query.message.reply_document(document=io.BytesIO(output.getvalue().encode('utf-8')), filename=f"notas_{quiz_id}.csv", caption=f"📊 {quiz['nombre']}")
-        await query.edit_message_text("✅ Archivo generado")
+        filename = f"notas_{quiz_id}_{quiz['nombre'].replace(' ', '_')}.csv"
+        
+        await query.message.reply_document(
+            document=io.BytesIO(output.getvalue().encode('utf-8')),
+            filename=filename,
+            caption=f"📊 Notas de {quiz['nombre']}"
+        )
+        await query.edit_message_text("✅ Archivo CSV generado")
 
 def main():
     bot = QuizBot()
@@ -411,7 +603,7 @@ def main():
     app.add_handler(CommandHandler("notas", bot.ver_notas))
     app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.procesar_todo))
-    print("BOT INICIADO")
+    print("BOT INICIADO - Pregunta por pregunta")
     app.run_polling()
     bot.db.close()
 
