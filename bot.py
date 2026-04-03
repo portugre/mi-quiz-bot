@@ -89,7 +89,7 @@ class QuizBot:
             await self.descargar_excel(update, ctx, quiz_id)
     
     async def ayuda(self, update, ctx):
-        await update.message.reply_text("Comandos:\n/crear_quiz - Crear\n/mis_quizzes - Ver\n/enlace <ID> - Enlace\n/notas <ID> - Ver notas")
+        await update.message.reply_text("Comandos:\n/crear_quiz - Crear\n/mis_quizzes - Ver\n/enlace <ID> - Enlace\n/notas <ID> - Ver notas\n/borrar_quiz <ID> - Eliminar quiz")
     
     async def crear_quiz(self, update, ctx):
         self.quiz = {'preguntas': []}
@@ -276,6 +276,7 @@ class QuizBot:
             await update.message.reply_text(msg)
     
     async def procesar_registro(self, update, ctx):
+        # ✅ CORREGIDO: ctx.user_data COMPLETO
         if 'quiz_id' not in ctx.user_data:
             return
         qid = ctx.user_data['quiz_id']
@@ -409,6 +410,7 @@ class QuizBot:
     async def procesar_todo(self, update, ctx):
         if self.estado_creacion:
             await self.procesar_creacion(update, ctx)
+        # ✅ CORREGIDO: ctx.user_data COMPLETO
         elif 'quiz_id' in ctx.user_data:
             paso = ctx.user_data.get('paso_registro', '')
             if paso == 'RESPUESTA_PREGUNTA':
@@ -497,7 +499,6 @@ class QuizBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Error al eliminar: {str(e)}")
     
-    # ✅ COMANDO PARA VER NOTAS (NUEVO)
     async def ver_notas(self, update, ctx):
         if update.effective_user.id != ADMIN_ID:
             await update.message.reply_text("❌ Solo el admin puede ver las notas")
@@ -541,7 +542,6 @@ class QuizBot:
         keyboard = [[InlineKeyboardButton("📥 DESCARGAR EXCEL", callback_data=f"excel_{quiz_id}")]]
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
     
-    # ✅ FUNCIÓN PARA DESCARGAR EXCEL (NUEVO)
     async def descargar_excel(self, update, ctx, quiz_id):
         query = update.callback_query
         await query.answer()
@@ -554,18 +554,14 @@ class QuizBot:
             await query.edit_message_text("❌ No hay respuestas para este quiz")
             return
         
-        # Crear CSV (compatible con Excel)
         output = io.StringIO()
         writer = csv.writer(output)
         
-        # Headers
         headers = ['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje']
         writer.writerow(headers)
         
-        # Datos
         for resp in respuestas:
             nombre_completo = resp['nombre_completo']
-            # Extraer cédula si está en el formato "Nombre (12345678)"
             if '(' in nombre_completo and ')' in nombre_completo:
                 nombre = nombre_completo.split('(')[0].strip()
                 cedula = nombre_completo.split('(')[1].replace(')', '').strip()
@@ -586,7 +582,6 @@ class QuizBot:
             
             writer.writerow(row)
         
-        # Enviar archivo
         output.seek(0)
         filename = f"notas_{quiz_id}_{quiz['nombre'].replace(' ', '_')}.csv"
         
@@ -609,10 +604,7 @@ def main():
     app.add_handler(CommandHandler("cerrar", bot.cerrar))
     app.add_handler(CommandHandler("participar", bot.participar))
     app.add_handler(CommandHandler("borrar_quiz", bot.borrar_quiz))
-    
-    # ✅ HANDLER PARA /notas (NUEVO)
     app.add_handler(CommandHandler("notas", bot.ver_notas))
-    
     app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.procesar_todo))
     print("BOT INICIADO - Pregunta por pregunta")
