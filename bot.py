@@ -383,7 +383,7 @@ class QuizBot:
             await query.edit_message_text("❌ No hay respuestas")
             return
         output = io.StringIO()
-        writer = csv.writer(output)
+        writer = csv.writer(output, delimiter=';')
         writer.writerow(['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje'])
         for resp in respuestas:
             nc = resp['nombre_completo']
