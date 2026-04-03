@@ -384,7 +384,7 @@ class QuizBot:
             return
         output = io.StringIO()
         # ✅ CORRECCIÓN: delimiter=';' para Excel en español
-        writer = csv.writer(output, delimiter=';')
+        writer = csv.writer(output, delimiter=';') # Excel español
         writer.writerow(['Nombre', 'Cedula'] + [f"P{i}" for i in range(1, len(preguntas)+1)] + ['Puntuacion', 'Porcentaje'])
         for resp in respuestas:
             nc = resp['nombre_completo']
